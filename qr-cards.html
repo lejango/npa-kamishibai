@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Semua QR Lokasi – Cetak</title>
+  <meta name="robots" content="noindex, nofollow">
+  <style>
+    :root { color-scheme: light dark; --primary:#0d6efd; --bg:#fff; --border:#ddd; --muted:#888; }
+    @media (prefers-color-scheme: dark){ :root{ --primary:#3d8bfd; --bg:#1e1e1e; --border:#333; --muted:#aaa; } body{ background:#121212; color:#e6e6e6; } }
+    body{ font-family:system-ui,-apple-system,sans-serif; margin:24px; }
+    .toolbar{ display:flex; gap:8px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+    .btn{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:8px; background:var(--primary); color:#fff; text-decoration:none; font-weight:600; border:none; cursor:pointer; }
+    .grid{ display:grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap:16px; }
+    .card{ border:1px solid var(--border); border-radius:12px; padding:12px; background:var(--bg); page-break-inside: avoid; }
+    .title{ font-weight:700; margin:6px 0 2px; }
+    .muted{ color:var(--muted); font-size:12px; }
+    .qr{ width:100%; background:#fff; border:1px solid var(--border); border-radius:8px; }
+    @media print{
+      .toolbar{ display:none; }
+      body{ margin:0; }
+      .grid{ grid-template-columns: repeat(3, 1fr); gap:12px; padding:12px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="toolbar">
+    <a class="btn" href="./index.html">← Kembali</a>
+    <button id="btnPrint" class="btn">🖨️ Print</button>
+    <label class="muted">Ukuran: <select id="selSize"><option>200</option><option selected>256</option><option>320</option><option>400</option></select> px</label>
+    <label class="muted"><input type="checkbox" id="showSlug" checked> Tampilkan slug</label>
+  </div>
+
+  <div id="grid" class="grid"></div>
+
+<script>
+(function(){
+  const JSON_URLS=['./data/questions.json','data/questions.json','./questions.json','questions.json'];
+  const grid=document.getElementById('grid');
+  const selSize=document.getElementById('selSize');
+  const showSlug=document.getElementById('showSlug');
+
+  function toSlug(s){ return String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,''); }
+  function qrTarget(slug){ const base=location.origin+location.pathname.replace(/\/qr-cards\.html?$/,'/qr.html'); return `${base}?loc=${encodeURIComponent(slug)}`; }
+
+  async function load(){
+    let last=null; for(const u of JSON_URLS){ try{ const r=await fetch(u,{cache:'no-store'}); if(!r.ok) throw 0; return await r.json(); }catch(e){ last=e; } } throw last||new Error('load failed');
+  }
+
+  function renderCards(data){
+    const locs=(data.locations||[]).filter(l=>l.active!==false);
+    grid.innerHTML='';
+    const size=parseInt(selSize.value,10)||256;
+    for(const l of locs){
+      const slug = l.slug? String(l.slug): toSlug(l.name||'');
+      const url = 'https://api.qrserver.com/v1/create-qr-code/?size='+size+'x'+size+'&data='+encodeURIComponent(qrTarget(slug));
+      const div=document.createElement('div');
+      div.className='card';
+      div.innerHTML = `
+        <img class="qr" alt="qr" src="${url}">
+        <div class="title">${l.name? l.name.replace(/</g,'&lt;') : ''}</div>
+        <div class="muted">${l.group? '('+l.group+')' : ''} ${showSlug.checked? '['+slug+']':''}</div>
+      `;
+      grid.appendChild(div);
+    }
+  }
+
+  selSize.addEventListener('change', ()=>load().then(renderCards));
+  showSlug.addEventListener('change', ()=>load().then(renderCards));
+  document.getElementById('btnPrint').addEventListener('click', ()=>window.print());
+
+  load().then(renderCards).catch(()=>{ grid.innerHTML='<p class="muted">Gagal memuat data lokasi.</p>'; });
+})();
+</script>
+</body>
+</html>

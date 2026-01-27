@@ -1,0 +1,221 @@
+<!doctype html>
+<html lang="id">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Penjadwalan Audit Harian (WIB) – v2.5.2</title>
+  <meta name="robots" content="noindex, nofollow">
+  <style>
+    :root { color-scheme: light dark; --primary:#0d6efd; --bg:#fff; --border:#ddd; --muted:#888; }
+    @media (prefers-color-scheme: dark){ :root{ --primary:#3d8bfd; --bg:#1e1e1e; --border:#333; --muted:#aaa; } body{ background:#121212; color:#e6e6e6; } }
+    body{ font-family:system-ui,-apple-system,sans-serif; margin:24px; line-height:1.5; }
+    .card{ max-width:1000px; margin:auto; background:var(--bg); border:1px solid var(--border); border-radius:12px; padding:20px; }
+    h1{ margin:0 0 6px; font-size:20px; color:var(--primary); display:flex; align-items:center; gap:8px; }
+    .muted{ color:var(--muted); font-size:13px; }
+    .badge{ display:inline-block; padding:2px 8px; border-radius:999px; border:1px solid var(--border); font-size:12px; }
+    .preview{ margin-top:12px; border:1px dashed var(--border); border-radius:8px; padding:12px; }
+    table{ width:100%; border-collapse:collapse; font-size:13px; margin-top:10px; }
+    th,td{ border:1px solid var(--border); padding:8px; text-align:left; vertical-align:top; }
+    th{ background:rgba(0,0,0,.04); }
+    .btn{ display:inline-flex; align-items:center; gap:6px; padding:6px 10px; border-radius:8px; background:var(--primary); color:#fff; text-decoration:none; font-weight:600; border:none; cursor:pointer; }
+    .btn.secondary{ background:#6c757d; }
+    .btn.ghost{ background:transparent; color:var(--primary); border:1px solid var(--primary); }
+    .btn.small{ padding:4px 8px; font-size:12px; }
+    .btn.disabled{ background:#999; pointer-events:none; }
+    mark{ background:#fff3cd; padding:0 4px; border-radius:4px; }
+    .nowrap{ white-space:nowrap; }
+    .toolbar{ display:flex; gap:8px; flex-wrap:wrap; margin-top:8px; }
+    details.settings{ margin-top:12px; }
+    details.settings summary{ cursor:pointer; color:var(--primary); }
+    textarea,input[type=text]{ width:100%; box-sizing:border-box; padding:8px; border:1px solid var(--border); border-radius:8px; background:inherit; color:inherit; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>📅 Penjadwalan Audit Harian <span class="muted">v2.5.2</span></h1>
+    <p id="tzInfo" class="muted">Memuat WIB…</p>
+    <div class="toolbar">
+      <a class="btn" href="./qr-cards.html" title="Halaman semua QR untuk dicetak">🖨️ Cetak Semua QR</a>
+      <button id="btnExport" class="btn" title="Export CSV jadwal hari ini">⬇️ Export CSV</button>
+      <button id="btnReload" class="btn secondary" title="Muat ulang data">🔄 Reload</button>
+    </div>
+    <div id="summary" class="muted"></div>
+    <div id="panel" class="preview">Menyiapkan penugasan…</div>
+
+    <details class="settings">
+      <summary>⚙️ Pengaturan Template Email & opsi</summary>
+      <div class="muted" style="margin:8px 0;">Placeholder: <code>{{tanggal}}</code>, <code>{{lokasi_name}}</code>, <code>{{lokasi_key}}</code></div>
+      <label>Subject</label>
+      <input id="tplSubject" type="text" value="Jadwal Audit {{tanggal}} – {{lokasi_name}}">
+      <label>Body</label>
+      <textarea id="tplBody" rows="6">Tanggal : {{tanggal}}
+Lokasi  : {{lokasi_name}}
+
+Instruksi:
+- Datang ke lokasi sesuai jadwal + lakukan Scan QR code,
+- Jawab pertanyaan + foto lokasi & kirim jawaban ke Admin.
+
+Terima kasih.</textarea>
+      <div style="display:flex; gap:12px; margin-top:8px; align-items:center;">
+        <label class="nowrap"><input id="optFallback" type="checkbox" checked> Aktifkan fallback lokasi</label>
+        <label class="nowrap"><input id="optOverbook" type="checkbox"> Izinkan overbook lembut (hanya beri penanda)</label>
+        <label class="nowrap">Kapasitas/lokasi: <input id="optCap" type="text" value="1" style="width:60px; text-align:center;"></label>
+        <label class="nowrap">Kuota libur/hari: <input id="optOff" type="text" value="2" style="width:60px; text-align:center;"></label>
+      </div>
+      <p class="muted">QR link telah dihapus dari template email default.</p>
+    </details>
+
+    <p class="muted">💡 Gunakan tombol <b>Cetak Semua QR</b> untuk menyiapkan QR permanen per lokasi.</p>
+  </div>
+
+<script>
+(function(){
+  const JSON_URLS = [ './data/questions.json', 'data/questions.json', './questions.json', 'questions.json' ];
+  const CRLF = '\r\n';
+
+  const store = { get k(){ return JSON.parse(localStorage.getItem('sched_cfg')||'{}'); }, set k(v){ localStorage.setItem('sched_cfg', JSON.stringify(v)); } };
+  function getCfg(){ const k=store.k; return {
+    MAX_OFF_PER_DAY: Number(k.MAX_OFF_PER_DAY ?? 2),
+    ENABLE_FALLBACK_LOCATION: Boolean(k.ENABLE_FALLBACK_LOCATION ?? true),
+    LOC_CAPACITY: Number(k.LOC_CAPACITY ?? 1),
+    ALLOW_SOFT_OVERBOOK: Boolean(k.ALLOW_SOFT_OVERBOOK ?? false),
+    tplSubject: String(k.tplSubject ?? 'Jadwal Audit {{tanggal}} – {{lokasi_name}}'),
+    tplBody: String(k.tplBody ?? 'Tanggal : {{tanggal}}\nLokasi  : {{lokasi_name}}\n\nInstruksi:\n- Datang ke lokasi sesuai jadwal + lakukan Scan QR code,\n- Jawab pertanyaan + foto lokasi & kirim jawaban ke Admin.\n\nTerima kasih.'),
+  }; }
+  function saveCfgFromUI(){ store.k = {
+    MAX_OFF_PER_DAY: Number(document.getElementById('optOff').value||2),
+    ENABLE_FALLBACK_LOCATION: document.getElementById('optFallback').checked,
+    LOC_CAPACITY: Number(document.getElementById('optCap').value||1),
+    ALLOW_SOFT_OVERBOOK: document.getElementById('optOverbook').checked,
+    tplSubject: document.getElementById('tplSubject').value,
+    tplBody: document.getElementById('tplBody').value,
+  }; }
+  function initSettingsUI(){ const cfg=getCfg();
+    document.getElementById('optOff').value = cfg.MAX_OFF_PER_DAY;
+    document.getElementById('optFallback').checked = cfg.ENABLE_FALLBACK_LOCATION;
+    document.getElementById('optCap').value = cfg.LOC_CAPACITY;
+    document.getElementById('optOverbook').checked = cfg.ALLOW_SOFT_OVERBOOK;
+    document.getElementById('tplSubject').value = cfg.tplSubject;
+    document.getElementById('tplBody').value = cfg.tplBody; }
+
+  function getWIBDateObj(){ const now=new Date(); return new Date(now.getTime() + (now.getTimezoneOffset()*60000) + (7*3600000)); }
+  const getWIBDateISO = () => getWIBDateObj().toISOString().split('T')[0];
+  function getWIBDayInfo(){ const d=getWIBDateObj(); const dow=d.getUTCDay(); const names=['Minggu','Senin','Selasa','Rabu','Kamis','Jumat','Sabtu']; return {dow, name:names[dow]}; }
+  const isWorkdayWIB = () => { const {dow}=getWIBDayInfo(); return dow>=1 && dow<=5; };
+  function getWIBISOWeek(){ const d=getWIBDateObj(); const date=new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate())); const dayNum=(date.getUTCDay()+6)%7; date.setUTCDate(date.getUTCDate()-dayNum+3); const firstThursday=new Date(Date.UTC(date.getUTCFullYear(),0,4)); const firstDayNum=(firstThursday.getUTCDay()+6)%7; firstThursday.setUTCDate(firstThursday.getUTCDate()-firstDayNum+3); const diff=(date-firstThursday)/86400000; return 1+Math.floor(diff/7); }
+  function seededRandom(seed){ let t = seed + 0x6D2B79F5; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; }
+  function hashStr(str){ let h=2166136261>>>0; for(let i=0;i<str.length;i++) h=Math.imul(h^str.charCodeAt(i),16777619); return h>>>0; }
+  function seededShuffle(arr, seed){ const a=arr.slice(); for(let i=a.length-1;i>0;i--){ const r=seededRandom(seed + i); const j=Math.floor(r*(i+1)); [a[i],a[j]]=[a[j],a[i]]; } return a; }
+
+  function escapeHtml(s){ return String(s ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;'); }
+  async function fetchJSON(url){ const r=await fetch(url,{cache:'no-store'}); if(!r.ok) throw new Error('HTTP '+r.status+' '+r.statusText+' @ '+url); return r.json(); }
+  async function loadData(){ let lastErr=null; for(const u of JSON_URLS){ try{ return await fetchJSON(u); }catch(e){ lastErr=e; } } throw lastErr||new Error('Unknown error'); }
+
+  function withUIDLocations(arr){ return (arr||[]).map((l,i)=> Object.assign({}, l, { uid: String(l.key??'')+'|'+String(l.name??'')+'#'+i })); }
+  function toSlug(s){ return String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-+|-+$/g,''); }
+
+  function getOffdaysForAuditor(auditorId){ const week=getWIBISOWeek(); const days=[1,2,3,4,5]; const shuffled=seededShuffle(days, hashStr(auditorId+':'+week+':off')); return shuffled.slice(0,2).sort(); }
+  function applyTemplate(str, dict){ return str.replace(/\{\{(.*?)\}\}/g, (_,k)=> String(dict[k.trim()] ?? '')); }
+  function composeScheduleMailto(to, tplSubject, tplBody, tanggal, lokasi){
+    // hilangkan QR link di email → jangan isi qr_url
+    const tokens = { tanggal, lokasi_name: lokasi.name, lokasi_key: lokasi.key, qr_url: '' };
+    const subject = applyTemplate(tplSubject, tokens);
+    const body    = applyTemplate(tplBody, tokens);
+    return `mailto:${encodeURIComponent(to)}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
+  }
+
+  function buildAssignments(data, tanggalISO){
+    const cfg=getCfg(); const auditors=(data.auditors||[]).slice(); const scopes=data.scopes||{}; const locationsRaw=(data.locations||[]).filter(l=>l.active!==false); const locations=withUIDLocations(locationsRaw);
+    const seed=hashStr(tanggalISO+':assign'); const auditorsOrder=seededShuffle(auditors, seed+101); const locationsOrder=seededShuffle(locations, seed+202);
+
+    const used = new Map(); const { dow }=getWIBDayInfo(); const rows=[]; let todayOffCount=0;
+    function count(uid){ return used.get(uid)||0; } function canTake(uid){ return count(uid) < getCfg().LOC_CAPACITY; } function take(uid, soft){ const c=count(uid); used.set(uid,c+1); return {occ:c+1, overbook: soft && c+1>getCfg().LOC_CAPACITY}; }
+
+    for(const aud of auditorsOrder){
+      const offdays=getOffdaysForAuditor(aud.id);
+      if (dow===0 || dow===6){ rows.push({auditor:aud,status:'WEEKEND',location:null}); continue; }
+      if (offdays.includes(dow) && todayOffCount < getCfg().MAX_OFF_PER_DAY){ rows.push({auditor:aud,status:'OFFDAY',location:null}); todayOffCount++; continue; }
+
+      const allowedKeys = Array.isArray(scopes[aud.id]) ? scopes[aud.id] : locationsOrder.map(l=>l.key);
+      let allowed = allowedKeys.map(k=> locationsOrder.find(x=>x.key===k || x.name===k)).filter(Boolean);
+
+      let entry = {auditor:aud,status:'NOT_ASSIGNED',location:null, occ:null, cap:getCfg().LOC_CAPACITY, overbook:false};
+      for(const loc of allowed){ if (canTake(loc.uid)){ const r=take(loc.uid,false); entry={auditor:aud,status:'ASSIGNED',location:loc,occ:r.occ,cap:getCfg().LOC_CAPACITY,overbook:false}; break; } }
+      if (entry.status!=='ASSIGNED' && getCfg().ENABLE_FALLBACK_LOCATION){
+        const any = locationsOrder.find(x=>canTake(x.uid));
+        if (any){ const r=take(any.uid,false); entry={auditor:aud,status:'ASSIGNED',location:any,occ:r.occ,cap:getCfg().LOC_CAPACITY,overbook:false}; }
+        else if (getCfg().ALLOW_SOFT_OVERBOOK){ let best=locationsOrder.slice().sort((a,b)=>count(a.uid)-count(b.uid))[0]; if (best){ const r=take(best.uid,true); entry={auditor:aud,status:'ASSIGNED',location:best,occ:r.occ,cap:getCfg().LOC_CAPACITY,overbook:r.overbook}; } }
+      }
+      rows.push(entry);
+    }
+    return { rows, used, cap: getCfg().LOC_CAPACITY };
+  }
+
+  function render(){
+    const tanggal=getWIBDateISO(); const dayInfo=getWIBDayInfo(); const workday=isWorkdayWIB();
+    document.getElementById('tzInfo').innerHTML = `WIB (UTC+7) — <span class="badge">${escapeHtml(dayInfo.name)} ${workday? '• Hari kerja':'• Bukan hari kerja'}</span> — ${tanggal}`;
+
+    loadData().then(data=>{
+      const result = buildAssignments(data, tanggal); const rows = result.rows; const used = result.used; const CAP = result.cap;
+      const total=rows.length, assigned=rows.filter(r=>r.status==='ASSIGNED').length, off=rows.filter(r=>r.status==='OFFDAY').length, none=rows.filter(r=>r.status==='NOT_ASSIGNED').length, weekend=rows.filter(r=>r.status==='WEEKEND').length;
+      document.getElementById('summary').innerHTML = `<span class="badge">Total: ${total}</span> <span class="badge">Assigned: ${assigned}</span> <span class="badge">Offday: ${off}</span> <span class="badge">Tanpa lokasi: ${none}</span>${weekend? ' <span class="badge">Weekend:'+weekend+'</span>':''} <span class="badge">Kuota libur/hari: ${getCfg().MAX_OFF_PER_DAY}</span> <span class="badge">Kapasitas/lokasi: ${getCfg().LOC_CAPACITY}</span>${getCfg().ALLOW_SOFT_OVERBOOK?' <span class="badge">Overbook lembut: ON</span>':''}`;
+
+      let html = '<table><thead><tr><th>#</th><th>Auditor</th><th class="nowrap">Offday (minggu ini)</th><th>Lokasi</th><th class="nowrap">Aksi</th></tr></thead><tbody>';
+      rows.forEach((r,i)=>{
+        const offdays = getOffdaysForAuditor(r.auditor.id).map(d=>['','Sen','Sel','Rab','Kam','Jum'][d]).join(', ');
+        let locCell = '<span class="muted">-</span>'; let action = '<span class="muted">-</span>';
+        if (r.status==='ASSIGNED' && r.location){
+          const occ = used.get(r.location.uid) || r.occ || 1; const cap = r.cap || CAP;
+          const occBadge = cap>1 ? ` <span class=\"muted\">(${occ}/${cap})</span>` : (occ>1? ` <span class=\"muted\">(over ${occ-1})</span>`:'');
+          const group = r.location.group? ` <span class=\"muted\">(${escapeHtml(r.location.group)})</span>`: '';
+          locCell = `${escapeHtml(r.location.name)}${group}${occBadge}`;
+          const mailto = composeScheduleMailto(r.auditor.email, getCfg().tplSubject, getCfg().tplBody, tanggal, r.location);
+          action = `<div style=\"display:flex; gap:6px;\"><a class=\"btn\" href=\"${mailto}\">Kirim</a></div>`; // QR button removed
+          if (!workday) action = '<span class="muted">Nonaktif (bukan hari kerja)</span>';
+        } else if (r.status==='OFFDAY') { locCell = '<mark>LIBUR</mark>'; action = '<span class="muted">Libur</span>'; }
+        else if (r.status==='NOT_ASSIGNED'){ locCell = '<mark>⚠️ TANPA LOKASI</mark>'; action = '<span class="muted">Tidak tersedia</span>'; }
+        else if (r.status==='WEEKEND'){ locCell = '<span class="muted">-</span>'; action = '<span class="muted">Weekend</span>'; }
+        html += `<tr><td class=\"nowrap\">${i+1}</td><td class=\"nowrap\">${escapeHtml(r.auditor.name)} &lt;${escapeHtml(r.auditor.email||'')}&gt;</td><td>${escapeHtml(offdays)}</td><td>${locCell}</td><td>${action}</td></tr>`;
+      });
+      html += '</tbody></table>';
+      document.getElementById('panel').innerHTML = html;
+
+      // Export CSV
+      document.getElementById('btnExport').onclick = ()=>{
+        const header = ['tanggal','auditor_id','auditor_name','auditor_email','status','lokasi_key','lokasi_name','group','occupancy','capacity'];
+        const lines = [header.join(',')];
+        rows.forEach(r=>{
+          const occ = (r.location? (used.get(r.location.uid)||r.occ||1):0);
+          const cap = r.cap||getCfg().LOC_CAPACITY;
+          const rec = [ tanggal,
+            r.auditor.id,
+            '"'+(r.auditor.name||'').replace(/"/g,'""')+'"',
+            r.auditor.email||'',
+            r.status,
+            r.location? (r.location.key||''): '',
+            r.location? ('"'+(r.location.name||'').replace(/"/g,'""')+'"'):'',
+            r.location? (r.location.group||''):'',
+            r.location? occ: '',
+            r.location? cap: ''
+          ];
+          lines.push(rec.join(','));
+        });
+        const blob = new Blob([lines.join('\n')], {type:'text/csv'});
+        const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'jadwal-'+tanggal+'.csv'; a.click(); setTimeout(()=>URL.revokeObjectURL(a.href), 2000);
+      };
+
+      document.getElementById('btnReload').onclick = ()=>{ saveCfgFromUI(); location.reload(); };
+    }).catch(err=>{
+      document.getElementById('panel').innerHTML = `<span class=\"err\">Gagal memuat data:</span> ${escapeHtml(err.message)}<br><small class=\"muted\">Pastikan <code>data/questions.json</code> tersedia.</small>`;
+    });
+  }
+
+  initSettingsUI();
+  ['tplSubject','tplBody','optFallback','optOverbook','optCap','optOff'].forEach(id=>{ const el=document.getElementById(id); if(el){ el.addEventListener(el.type==='checkbox'?'change':'input', saveCfgFromUI); } });
+  const tanggal = getWIBDateISO(); const dayInfo = getWIBDayInfo();
+  document.getElementById('tzInfo').innerHTML = `WIB (UTC+7) — <span class="badge">${escapeHtml(dayInfo.name)} ${isWorkdayWIB()? '• Hari kerja':'• Bukan hari kerja'}</span> — ${tanggal}`;
+  render();
+})();
+</script>
+</body>
+</html>
